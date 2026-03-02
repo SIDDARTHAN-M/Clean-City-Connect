@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, MapPin, Send, History, CheckCircle, Clock, AlertCircle } from 'lucide-react';
-import axios from 'axios';
+import api from '../utils/api';
 
 const CivilianDashboard = () => {
     const [view, setView] = useState('report'); // 'report' or 'history'
@@ -20,7 +20,7 @@ const CivilianDashboard = () => {
 
     const fetchComplaints = async () => {
         try {
-            const res = await axios.get('http://localhost:5000/api/complaints/my');
+            const res = await api.get('/complaints/my');
             setComplaints(res.data);
         } catch (err) {
             console.error(err);
@@ -52,7 +52,7 @@ const CivilianDashboard = () => {
             formData.append('description', description);
             formData.append('area', area);
 
-            await axios.post('http://localhost:5000/api/complaints', formData, {
+            await api.post('/complaints', formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data'
                 }

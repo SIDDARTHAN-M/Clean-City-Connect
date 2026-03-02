@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Shield, LogIn } from 'lucide-react';
-import axios from 'axios';
+import api from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -18,13 +18,12 @@ const AdminLoginPage = () => {
         setLoading(true);
         setError('');
         try {
-            const res = await axios.post('http://localhost:5000/api/admin/login', { email, password });
+            const res = await api.post('/admin/login', { email, password });
             const { token, user } = res.data;
 
             // Store credentials
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(user));
-            axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
             setUserDirectly(user);
 
             navigate('/admin/dashboard');

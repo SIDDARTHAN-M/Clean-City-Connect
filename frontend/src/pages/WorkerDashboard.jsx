@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { MapPin, Navigation, CheckCircle, Clock, ExternalLink, Image as ImageIcon, Send } from 'lucide-react';
-import axios from 'axios';
+import api from '../utils/api';
 
 const WorkerDashboard = () => {
     const [location, setLocation] = useState(null);
@@ -33,7 +33,7 @@ const WorkerDashboard = () => {
 
     const fetchNearbyJobs = async () => {
         try {
-            const res = await axios.get(`http://localhost:5000/api/complaints/nearby?lat=${location.lat}&lng=${location.lng}`);
+            const res = await api.get(`/complaints/nearby?lat=${location.lat}&lng=${location.lng}`);
             setJobs(res.data);
         } catch (err) {
             console.error(err);
@@ -44,7 +44,7 @@ const WorkerDashboard = () => {
 
     const handleAccept = async (id) => {
         try {
-            await axios.patch(`http://localhost:5000/api/complaints/${id}/status`, { status: 'In Progress' });
+            await api.patch(`/complaints/${id}/status`, { status: 'In Progress' });
             fetchNearbyJobs();
         } catch (err) {
             alert('Failed to accept job');
@@ -75,7 +75,7 @@ const WorkerDashboard = () => {
             formData.append('workerCompletionComment', input.comment);
             formData.append('completionImage', input.file);
 
-            await axios.patch(`http://localhost:5000/api/complaints/${jobId}/status`, formData, {
+            await api.patch(`/complaints/${jobId}/status`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
 

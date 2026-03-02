@@ -4,7 +4,7 @@ import {
     LayoutDashboard, Users, ClipboardList, CheckCircle, XCircle,
     Eye, MapPin, Clock, MessageSquare, AlertCircle, ChevronDown, ChevronUp
 } from 'lucide-react';
-import axios from 'axios';
+import api from '../utils/api';
 
 const AdminDashboard = () => {
     const [workers, setWorkers] = useState([]);
@@ -25,8 +25,8 @@ const AdminDashboard = () => {
         setLoading(true);
         try {
             const [workersRes, complaintsRes] = await Promise.all([
-                axios.get('http://localhost:5000/api/admin/workers'),
-                axios.get(`http://localhost:5000/api/admin/complaints${activeFilter !== 'All' ? `?status=${activeFilter}` : ''}`)
+                api.get('/admin/workers'),
+                api.get(`/admin/complaints${activeFilter !== 'All' ? `?status=${activeFilter}` : ''}`)
             ]);
             setWorkers(workersRes.data);
             setComplaints(complaintsRes.data);
@@ -39,7 +39,7 @@ const AdminDashboard = () => {
 
     const handleApprove = async (id) => {
         try {
-            await axios.patch(`http://localhost:5000/api/admin/complaints/${id}/approve`);
+            await api.patch(`/admin/complaints/${id}/approve`);
             setSelectedComplaint(null);
             fetchData();
             alert('Complaint approved and released to civilian.');
@@ -51,7 +51,7 @@ const AdminDashboard = () => {
     const handleReject = async (id) => {
         if (!adminRemarks.trim()) return alert('Please provide remarks for rejection.');
         try {
-            await axios.patch(`http://localhost:5000/api/admin/complaints/${id}/reject`, { adminRemarks });
+            await api.patch(`/admin/complaints/${id}/reject`, { adminRemarks });
             setSelectedComplaint(null);
             setAdminRemarks('');
             fetchData();

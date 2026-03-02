@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Shield, UserPlus } from 'lucide-react';
-import axios from 'axios';
+import api from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -24,7 +24,7 @@ const AdminRegisterPage = () => {
 
         setLoading(true);
         try {
-            const res = await axios.post('http://localhost:5000/api/admin/register', {
+            const res = await api.post('/admin/register', {
                 fullName: formData.fullName,
                 email: formData.email,
                 phone: formData.phone,
@@ -35,7 +35,6 @@ const AdminRegisterPage = () => {
             const { token, user } = res.data;
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(user));
-            axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
             setUserDirectly(user);
             navigate('/admin/dashboard');
         } catch (err) {
