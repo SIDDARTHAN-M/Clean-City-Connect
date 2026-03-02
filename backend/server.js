@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
 const supabase = require('./config/supabase');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -11,13 +10,16 @@ const authRoutes = require('./routes/authRoutes');
 const complaintRoutes = require('./routes/complaintRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
-const app = express();
-
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(fileUpload({ useTempFiles: true }));
+
+// Health Check Route
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ status: 'ok', message: 'Backend is running' });
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -25,15 +27,15 @@ app.use('/api/complaints', complaintRoutes);
 app.use('/api/admin', adminRoutes);
 
 const connectDB = async () => {
+    if (!process.env.MONGODB_URI) {
+        console.error('CRITICAL: MONGODB_URI is not defined in environment variables.');
+        return;
+    }
     try {
         await mongoose.connect(process.env.MONGODB_URI);
-        console.log('MongoDB Connected to Local Database');
+        console.log('MongoDB Connected Successfully');
     } catch (err) {
-        console.log('Local MongoDB not found. Starting In-Memory MongoDB for Hackathon mode...');
-        const mongoServer = await MongoMemoryServer.create();
-        const mongoUri = mongoServer.getUri();
-        await mongoose.connect(mongoUri);
-        console.log(`MongoDB Connected to In-Memory DB at ${mongoUri}`);
+        console.error('MongoDB Connection Error:', err.message);
     }
 };
 
