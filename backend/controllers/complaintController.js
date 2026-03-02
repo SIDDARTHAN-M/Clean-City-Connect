@@ -1,5 +1,4 @@
-const Complaint = require('../models/Complaint');
-const User = require('../models/User');
+const supabase = require('../config/supabase');
 const cloudinary = require('cloudinary').v2;
 
 // Haversine formula to calculate distance between two lat/lng points in km
@@ -44,15 +43,21 @@ const createComplaint = async (req, res) => {
             location = JSON.parse(location);
         }
 
-        const complaint = new Complaint({
-            ...req.body,
-            location,
-            imageUrl,
-            reporter: req.user.id,
-            status: 'Pending'
-        });
-        await complaint.save();
-        res.status(201).json(complaint);
+        const { data, error } = await supabase
+            .from('complaints')
+            .insert({
+                reporter_id: req.user.id,
+                description: req.body.description,
+                location: location,
+                area: req.body.area,
+                image_url: imageUrl,
+                status: 'Pending'
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.status(201).json(data);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -60,15 +65,19 @@ const createComplaint = async (req, res) => {
 
 const getMyComplaints = async (req, res) => {
     try {
-        const complaints = await Complaint.find({ reporter: req.user.id }).sort({ createdAt: -1 });
+        const { data: complaints, error } = await supabase
+            .from('complaints')
+            .select('*')
+            .eq('reporter_id', req.user.id)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
 
         const sanitized = complaints.map(c => {
-            const obj = c.toObject();
-            if (obj.adminApprovalStatus !== 'Approved') {
-                obj.cleanedImageUrl = null;
-                obj.workerCompletionComment = null;
+            if (c.admin_approval_status !== 'Approved') {
+                return { ...c, cleaned_image_url: null, worker_completion_comment: null };
             }
-            return obj;
+            return c;
         });
 
         res.json(sanitized);
@@ -82,17 +91,24 @@ const getNearbyComplaints = async (req, res) => {
         const { lat, lng } = req.query;
         if (!lat || !lng) return res.status(400).json({ message: 'Location required' });
 
-        const worker = await User.findById(req.user.id);
-        if (!worker || !worker.area) {
+        // Fetch worker profile to get area
+        const { data: worker, error: workerError } = await supabase
+            .from('users')
+            .select('area')
+            .eq('id', req.user.id)
+            .single();
+
+        if (workerError || !worker || !worker.area) {
             return res.status(400).json({ message: 'Worker area not defined' });
         }
 
-        const visibleComplaints = await Complaint.find({
-            $or: [
-                { area: worker.area, status: 'Pending' },
-                { status: { $in: ['In Progress', 'Awaiting Admin Review', 'Rework Required'] }, worker: worker._id }
-            ]
-        }).populate('reporter', 'fullName phone');
+        // Fetch complaints that are either Pending in worker's area OR already assigned to this worker
+        const { data: visibleComplaints, error: complaintsError } = await supabase
+            .from('complaints')
+            .select('*, users!complaints_reporter_id_fkey(full_name, phone)')
+            .or(`and(area.eq.${worker.area},status.eq.Pending),worker_id.eq.${req.user.id}`);
+
+        if (complaintsError) throw complaintsError;
 
         const nearby = visibleComplaints.filter(c => {
             const distance = getDistance(parseFloat(lat), parseFloat(lng), c.location.lat, c.location.lng);
@@ -111,27 +127,34 @@ const updateStatus = async (req, res) => {
         const { status, workerCompletionComment } = req.body;
 
         const update = { status };
-        if (status === 'In Progress') update.worker = req.user.id;
+        if (status === 'In Progress') update.worker_id = req.user.id;
 
         if (status === 'Awaiting Admin Review') {
             if (!req.files || !req.files.completionImage) {
                 return res.status(400).json({ message: 'Completion image is mandatory to close a job.' });
             }
-            update.workerCompletionComment = workerCompletionComment || 'Completed';
+            update.worker_completion_comment = workerCompletionComment || 'Completed';
 
             try {
                 const result = await cloudinary.uploader.upload(req.files.completionImage.tempFilePath, {
                     folder: 'wastewatch_completed'
                 });
-                update.cleanedImageUrl = result.secure_url;
+                update.cleaned_image_url = result.secure_url;
             } catch (uploadErr) {
                 console.log("Cloudinary completion upload failed, using fallback.");
-                update.cleanedImageUrl = "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=800";
+                update.cleaned_image_url = "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=800";
             }
         }
 
-        const complaint = await Complaint.findByIdAndUpdate(id, update, { new: true });
-        res.json(complaint);
+        const { data, error } = await supabase
+            .from('complaints')
+            .update(update)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }

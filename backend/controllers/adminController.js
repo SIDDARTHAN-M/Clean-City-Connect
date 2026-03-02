@@ -1,7 +1,4 @@
-const User = require('../models/User');
-const Complaint = require('../models/Complaint');
 const supabase = require('../config/supabase');
-const jwt = require('jsonwebtoken');
 
 // ─── POST /api/admin/login ────────────────────────────────────────────────────
 const adminLogin = async (req, res) => {
@@ -16,12 +13,17 @@ const adminLogin = async (req, res) => {
 
         if (authError) return res.status(401).json({ message: 'Invalid admin credentials' });
 
-        // 2. Fetch User from MongoDB and verify admin role
-        const user = await User.findOne({ email, role: 'admin' });
-        if (!user) return res.status(401).json({ message: 'Not authorized as admin' });
+        // 2. Fetch User from Supabase and verify admin role
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .eq('role', 'admin')
+            .single();
 
-        const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
-        res.json({ token, user: { id: user._id, fullName: user.fullName, role: user.role } });
+        if (userError || !user) return res.status(401).json({ message: 'Not authorized as admin' });
+
+        res.json({ token: authData.session.access_token, user: { id: user.id, fullName: user.full_name, role: user.role } });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -45,12 +47,23 @@ const adminRegister = async (req, res) => {
 
         if (authError) return res.status(400).json({ message: authError.message });
 
-        // 2. Create Admin in MongoDB
-        const admin = new User({ fullName, email, phone, password, role: 'admin' });
-        await admin.save();
+        // 2. Create Admin Profile in Supabase
+        const { error: profileError } = await supabase
+            .from('users')
+            .insert({
+                id: authData.user.id,
+                email,
+                full_name: fullName,
+                phone,
+                role: 'admin'
+            });
 
-        const token = jwt.sign({ id: admin._id, role: admin.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
-        res.status(201).json({ token, user: { id: admin._id, fullName: admin.fullName, role: admin.role } });
+        if (profileError) throw profileError;
+
+        res.status(201).json({
+            token: authData.session?.access_token || 'Verification email sent',
+            user: { id: authData.user.id, fullName: fullName, role: 'admin' }
+        });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -59,15 +72,33 @@ const adminRegister = async (req, res) => {
 // ─── GET /api/admin/workers ──────────────────────────────────────────────────
 const getWorkers = async (req, res) => {
     try {
-        const workers = await User.find({ role: 'worker' }).select('-password');
+        const { data: workers, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('role', 'worker');
+
+        if (error) throw error;
 
         const enhancedWorkers = await Promise.all(workers.map(async (worker) => {
-            const assignedCount = await Complaint.countDocuments({ worker: worker._id, status: { $ne: 'Completed' } });
-            const inProgressCount = await Complaint.countDocuments({ worker: worker._id, status: 'In Progress' });
+            // Count complaints assigned to this worker that are not completed
+            const { count: assignedCount } = await supabase
+                .from('complaints')
+                .select('*', { count: 'exact', head: true })
+                .eq('worker_id', worker.id)
+                .neq('status', 'Completed');
+
+            // Check if they have any 'In Progress' tasks
+            const { count: inProgressCount } = await supabase
+                .from('complaints')
+                .select('*', { count: 'exact', head: true })
+                .eq('worker_id', worker.id)
+                .eq('status', 'In Progress');
+
             return {
-                ...worker.toObject(),
-                assignedCount,
-                activityStatus: inProgressCount > 0 ? 'Working' : 'Idle'
+                ...worker,
+                fullName: worker.full_name, // Map for frontend convenience
+                assignedCount: assignedCount || 0,
+                activityStatus: (inProgressCount || 0) > 0 ? 'Working' : 'Idle'
             };
         }));
 
@@ -81,12 +112,30 @@ const getWorkers = async (req, res) => {
 const getAllComplaints = async (req, res) => {
     try {
         const { status } = req.query;
-        const filter = status ? { status } : {};
-        const complaints = await Complaint.find(filter)
-            .populate('reporter', 'fullName phone email')
-            .populate('worker', 'fullName workerId phone area')
-            .sort({ createdAt: -1 });
-        res.json(complaints);
+        let query = supabase
+            .from('complaints')
+            .select(`
+                *,
+                reporter:users!complaints_reporter_id_fkey(full_name, phone, email),
+                worker:users!complaints_worker_id_fkey(full_name, worker_id, phone, area)
+            `)
+            .order('created_at', { ascending: false });
+
+        if (status) {
+            query = query.eq('status', status);
+        }
+
+        const { data: complaints, error } = await query;
+        if (error) throw error;
+
+        // Flatten the joined data for frontend compatibility if needed
+        const flattened = complaints.map(c => ({
+            ...c,
+            reporter: c.reporter,
+            worker: c.worker
+        }));
+
+        res.json(flattened);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -95,17 +144,19 @@ const getAllComplaints = async (req, res) => {
 const approveComplaint = async (req, res) => {
     try {
         const { id } = req.params;
-        const complaint = await Complaint.findByIdAndUpdate(
-            id,
-            {
+        const { data, error } = await supabase
+            .from('complaints')
+            .update({
                 status: 'Completed',
-                adminApprovalStatus: 'Approved',
-                adminReviewedAt: new Date()
-            },
-            { new: true }
-        );
-        if (!complaint) return res.status(404).json({ message: 'Complaint not found' });
-        res.json(complaint);
+                admin_approval_status: 'Approved',
+                updated_at: new Date()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -120,18 +171,20 @@ const rejectComplaint = async (req, res) => {
             return res.status(400).json({ message: 'Admin remarks are required when rejecting.' });
         }
 
-        const complaint = await Complaint.findByIdAndUpdate(
-            id,
-            {
+        const { data, error } = await supabase
+            .from('complaints')
+            .update({
                 status: 'Rework Required',
-                adminApprovalStatus: 'Rejected',
-                adminReviewedAt: new Date(),
-                adminRemarks
-            },
-            { new: true }
-        );
-        if (!complaint) return res.status(404).json({ message: 'Complaint not found' });
-        res.json(complaint);
+                admin_approval_status: 'Rejected',
+                admin_remarks: adminRemarks,
+                updated_at: new Date()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
